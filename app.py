@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import random
 
 # --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="ViShort Mega Pro Ultimate", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="ViShort Mega Pro", page_icon="🎬", layout="wide")
 
 if not os.path.exists('uploads'):
     os.makedirs('uploads')
@@ -270,8 +270,6 @@ st.sidebar.subheader("📌 Nawigacja")
 
 lista_zakladek = [
     "Strona główna", 
-    "🔥 Feed: Dla Ciebie",
-    "⚡ Trendy / Na czasie",
     "⭐ Subskrypcje",
     "🕒 Historia oglądania",
     "➕ Dodaj film", 
@@ -282,7 +280,7 @@ lista_zakladek = [
 ]
 
 if st.session_state.uzytkownik == "admin":
-    lista_zakladek.insert(6, "🛡️ Panel Administratora")
+    lista_zakladek.insert(4, "🛡️ Panel Administratora")
 
 menu = st.sidebar.radio("Wybierz zakładkę", lista_zakladek)
 
@@ -304,7 +302,7 @@ if st.sidebar.button("🎲 Szczęśliwy Traf"):
         st.session_state.losowy_film = random.choice(ids)
         st.success("Wylosowano film!")
 
-st.title("🎬 ViShort Mega Pro Ultimate")
+st.title("🎬 ViShort Mega Pro")
 st.markdown("---")
 
 # =========================================================================
@@ -370,39 +368,7 @@ if menu == "🛡️ Panel Administratora":
                 st.rerun()
 
 # =========================================================================
-# 2. FEED: DLA CIEBIE
-# =========================================================================
-elif menu == "🔥 Feed: Dla Ciebie":
-    st.header("🔥 Spersonalizowany Feed 'Dla Ciebie'")
-    conn = sqlite3.connect('baza.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, autor, tytul, opis_filmu, plik, miniatura, lajki, wyswietlenia, kategoria FROM filmy ORDER BY RANDOM() LIMIT 10')
-    for f_id, autor, tytul, opis, plik, mini, lajki, wysw, kat in cursor.fetchall():
-        st.subheader(tytul)
-        st.caption(f"Autor: {autor} | Kategoria: {kat}")
-        if os.path.exists(os.path.join('uploads', plik)):
-            st.video(os.path.join('uploads', plik))
-        st.markdown("---")
-    conn.close()
-
-# =========================================================================
-# 3. TRENDY / NA CZASIE
-# =========================================================================
-elif menu == "⚡ Trendy / Na czasie":
-    st.header("⚡ Najpopularniejsze materiały w tym tygodniu")
-    conn = sqlite3.connect('baza.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, autor, tytul, plik, wyswietlenia, lajki FROM filmy ORDER BY wyswietlenia DESC, lajki DESC LIMIT 10')
-    for f_id, autor, tytul, plik, wysw, lajki in cursor.fetchall():
-        st.subheader(f"🔥 {tytul} (👁️ {wysw} wyświetleń | ❤️ {lajki})")
-        st.caption(f"Autor: {autor}")
-        if os.path.exists(os.path.join('uploads', plik)):
-            st.video(os.path.join('uploads', plik))
-        st.markdown("---")
-    conn.close()
-
-# =========================================================================
-# 4. SUBSKRYPCJE
+# 2. SUBSKRYPCJE
 # =========================================================================
 elif menu == "⭐ Subskrypcje":
     st.header("⭐ Filmy obserwowanych twórców")
@@ -424,7 +390,7 @@ elif menu == "⭐ Subskrypcje":
     conn.close()
 
 # =========================================================================
-# 5. HISTORIA OGLĄDANIA
+# 3. HISTORIA OGLĄDANIA
 # =========================================================================
 elif menu == "🕒 Historia oglądania":
     st.header("🕒 Ostatnio oglądane filmy")
@@ -448,7 +414,7 @@ elif menu == "🕒 Historia oglądania":
         st.info("Twoja historia jest pusta.")
 
 # =========================================================================
-# 6. DODAJ FILM (Automatyczne tagowanie AI)
+# 4. DODAJ FILM
 # =========================================================================
 elif menu == "➕ Dodaj film":
     st.header("➕ Opublikuj nowy film")
@@ -457,9 +423,8 @@ elif menu == "➕ Dodaj film":
         opis_filmu = st.text_area("Opis filmu:")
         kategoria = st.selectbox("Kategoria:", ["Humor", "Gaming", "Edukacja", "Vlogs", "Muzyka", "Inne"])
         
-        # Automatyczne tagowanie AI na podstawie tytułu i kategorii
         auto_tagi = f"#{kategoria.lower()} #{tytul.split()[0].lower() if tytul else 'short'}"
-        tagi = st.text_input("Hashtagi (wygenerowane automatycznie przez AI):", value=auto_tagi)
+        tagi = st.text_input("Hashtag (AI):", value=auto_tagi)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -493,8 +458,47 @@ elif menu == "➕ Dodaj film":
             st.rerun()
 
 # =========================================================================
-# 7. ZNAJOMI I CHAT
+# 5. ZNAJOMI I CHAT
 # =========================================================================
 elif menu == "👥 Znajomi i Chat":
     st.header("👥 Znajomi i Wiadomości")
-   
+    conn = sqlite3.connect('baza.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT znajomy FROM znajomi WHERE uzytkownik = ?', (st.session_state.uzytkownik,))
+    znajomi = [r[0] for r in cursor.fetchall()]
+    conn.close()
+    
+    col_z, col_c = st.columns([1, 2])
+    with col_z:
+        wybrany = st.selectbox("Wybierz znajomego:", znajomi) if znajomi else None
+        if not znajomi:
+            st.info("Brak znajomych.")
+        with st.form("add_f", clear_on_submit=True):
+            s_u = st.text_input("Nazwa użytkownika:")
+            if st.form_submit_button("Dodaj") and s_u:
+                conn = sqlite3.connect('baza.db')
+                cursor = conn.cursor()
+                try:
+                    cursor.execute('INSERT INTO znajomi (uzytkownik, znajomy) VALUES (?, ?)', (st.session_state.uzytkownik, s_u))
+                    conn.commit()
+                    st.success("Dodano!")
+                    st.rerun()
+                except:
+                    st.warning("Już na liście lub brak użytkownika.")
+                conn.close()
+    with col_c:
+        if wybrany:
+            st.subheader(f"Czat z: {wybrany}")
+            conn = sqlite3.connect('baza.db')
+            cursor = conn.cursor()
+            cursor.execute('SELECT nadawca, tekst FROM wiadomosci WHERE (nadawca = ? AND odbiorca = ?) OR (nadawca = ? AND odbiorca = ?)', 
+                           (st.session_state.uzytkownik, wybrany, wybrany, st.session_state.uzytkownik))
+            msgs = cursor.fetchall()
+            conn.close()
+            
+            with st.container(height=300):
+                for n, t in msgs:
+                    if n == st.session_state.uzytkownik:
+                        st.chat_message("user").write(t)
+                    else:
+                        st.chat_message("
