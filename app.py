@@ -31,7 +31,7 @@ def init_db():
         )
     ''')
     
-    # Tabela filmów (dodana kolumna czy_ai)
+    # Tabela filmów
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS filmy (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -76,7 +76,21 @@ def init_db():
         )
     ''')
     
-    # Migracje tabel (bezpieczne dodawanie kolumn)
+    # --- BEZPIECZNA MIGRACJA KOLUMN UŻYTKOWNIKÓW ---
+    cursor.execute("PRAGMA table_info(uzytkownicy)")
+    u_cols = [c[1] for c in cursor.fetchall()]
+    if 'opis' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN opis TEXT DEFAULT ''")
+    if 'zdjecie_profilowe' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN zdjecie_profilowe TEXT DEFAULT ''")
+    if 'tlo_profilu' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN tlo_profilu TEXT DEFAULT ''")
+    if 'linki' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN linki TEXT DEFAULT ''")
+    if 'ostatnia_zmiana_nazwy' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN ostatnia_zmiana_nazwy TEXT DEFAULT ''")
+
+    # --- BEZPIECZNA MIGRACJA KOLUMN FILMÓW ---
     cursor.execute("PRAGMA table_info(filmy)")
     f_cols = [c[1] for c in cursor.fetchall()]
     if 'opis_filmu' not in f_cols:
@@ -156,7 +170,6 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Nawigacja")
 menu = st.sidebar.radio("Wybierz zakładkę", ["Strona główna", "Dodaj film", "Znajomi i Chat", "Moje Konto"])
 
-# Opcja ukrywania filmów AI w menu bocznym dla wygody
 st.sidebar.markdown("---")
 ukryj_ai = st.sidebar.checkbox("🚫 Ukryj filmy AI ze strony głównej", value=False)
 
@@ -182,7 +195,6 @@ if menu == "Dodaj film":
         with col_f2:
             miniatura = st.file_uploader("Zdjęcie początkowe / Miniatura (opcjonalnie):", type=["png", "jpg", "jpeg"])
             
-        # Blokada / Oznaczenie AI
         jest_ai = st.checkbox("🤖 Ten film został wygenerowany przez Sztuczną Inteligencję (AI)")
             
         submitted = st.form_submit_button("Opublikuj")
@@ -396,7 +408,6 @@ else:
     filmy = cursor.fetchall()
     conn.close()
 
-    # Ukrywanie filmów AI, jeśli włączono opcję w panelu bocznym
     if ukryj_ai:
         filmy = [f for f in filmy if f[7] == 0]
 
