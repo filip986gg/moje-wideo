@@ -3,6 +3,7 @@ import sqlite3
 import os
 import hashlib
 from datetime import datetime, timedelta
+import random
 
 # Konfiguracja strony
 st.set_page_config(page_title="ViShort", page_icon="🎬", layout="wide")
@@ -31,7 +32,7 @@ def init_db():
         )
     ''')
     
-    # Tabela filmów
+    # Tabela filmów (z dodatkowymi kolumnami widoków i kategorii)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS filmy (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -42,17 +43,20 @@ def init_db():
             miniatura TEXT DEFAULT '',
             prawa_autorskie TEXT DEFAULT 'Zweryfikowane (Czyste)',
             czy_ai INTEGER DEFAULT 0,
-            lajki INTEGER DEFAULT 0
+            lajki INTEGER DEFAULT 0,
+            wyswietlenia INTEGER DEFAULT 0,
+            kategoria TEXT DEFAULT 'Inne'
         )
     ''')
     
-    # Tabela na komentarze
+    # Tabela na komentarze (z lajkami komentarzy)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS komentarze (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             film_id INTEGER,
             autor TEXT,
-            tekst TEXT
+            tekst TEXT,
+            lajki INTEGER DEFAULT 0
         )
     ''')
     
@@ -73,6 +77,26 @@ def init_db():
             nadawca TEXT,
             odbiorca TEXT,
             tekst TEXT
+        )
+    ''')
+    
+    # Tabela powiadomień
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS powiadomienia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            odbiorca TEXT,
+            tekst TEXT,
+            przeczytane INTEGER DEFAULT 0
+        )
+    ''')
+
+    # Tabela zgłoszeń
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS zgloszenia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            film_id INTEGER,
+            powod TEXT,
+            zglaszajacy TEXT
         )
     ''')
     
@@ -101,6 +125,16 @@ def init_db():
         cursor.execute("ALTER TABLE filmy ADD COLUMN prawa_autorskie TEXT DEFAULT 'Zweryfikowane (Czyste)'")
     if 'czy_ai' not in f_cols:
         cursor.execute("ALTER TABLE filmy ADD COLUMN czy_ai INTEGER DEFAULT 0")
+    if 'wyswietlenia' not in f_cols:
+        cursor.execute("ALTER TABLE filmy ADD COLUMN wyswietlenia INTEGER DEFAULT 0")
+    if 'kategoria' not in f_cols:
+        cursor.execute("ALTER TABLE filmy ADD COLUMN kategoria TEXT DEFAULT 'Inne'")
+
+    # --- BEZPIECZNA MIGRACJA KOMENTARZY ---
+    cursor.execute("PRAGMA table_info(komentarze)")
+    k_cols = [c[1] for c in cursor.fetchall()]
+    if 'lajki' not in k_cols:
+        cursor.execute("ALTER TABLE komentarze ADD COLUMN lajki INTEGER DEFAULT 0")
         
     conn.commit()
     conn.close()
@@ -160,20 +194,52 @@ if not st.session_state.uzytkownik:
                     st.warning("Wypełnij wszystkie pola.")
     st.stop()
 
-# --- BOCZNE MENU ---
-st.sidebar.title(f"👤 {st.session_state.uzytkownik}")
+# --- BOCZNE MENU Z IKONAMI ---
+st.sidebar.markdown(f"### 👤 {st.session_state.uzytkownik}")
+
+# Sprawdzanie nieprzeczytanych powiadomień (Funkcja 2)
+conn = sqlite3.connect('baza.db')
+cursor = conn.cursor()
+cursor.execute('SELECT COUNT(*) FROM powiadomienia WHERE odbiorca = ? AND przeczytane = 0', (st.session_state.uzytkownik,))
+nieprzeczytane_count = cursor.fetchone()[0]
+conn.close()
+
+notif_label = f"🔔 Powiadomienia ({nieprzeczytane_count})" if nieprzeczytane_count > 0 else "🔔 Powiadomienia"
+
 if st.sidebar.button("Wyloguj się"):
     st.session_state.uzytkownik = ""
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Nawigacja")
-menu = st.sidebar.radio("Wybierz zakładkę", ["Strona główna", "Dodaj film", "Znajomi i Chat", "Moje Konto"])
+st.sidebar.subheader("📌 Nawigacja")
+menu = st.sidebar.radio("Wybierz zakładkę", [
+    "Strona główna", 
+    "➕ Dodaj film", 
+    "👥 Znajomi i Chat", 
+    "⚙️ Moje Konto", 
+    notif_label,
+    "ℹ️ O nas / Zasady"
+])
 
 st.sidebar.markdown("---")
-ukryj_ai = st.sidebar.checkbox("🚫 Ukryj filmy AI ze strony głównej", value=False)
+st.sidebar.subheader("⚙️ Filtry i Opcje")
+ukryj_ai = st.sidebar.checkbox("🚫 Ukryj filmy AI", value=False) # Funkcja 19
+wybrana_kategoria_filtr = st.sidebar.selectbox("📂 Kategoria", ["Wszystkie", "Humor", "Gaming", "Edukacja", "Vlogs", "Muzyka", "Inne"]) # Funkcja 4
+tryb_sortowania = st.sidebar.selectbox("📊 Sortowanie", ["Najnowsze", "Najpopularniejsze (❤️)", "Najczęściej odtwarzane (👁️)"]) # Funkcja 14
 
-# --- GÓRNY PASEK WYSZUKIWANIA ---
+if st.sidebar.button("🎲 Szczęśliwy Traf (Losowy film)"): # Funkcja 13
+    conn = sqlite3.connect('baza.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM filmy')
+    wszystkie_id = [r[0] for r in cursor.fetchall()]
+    conn.close()
+    if wszystkie_id:
+        st.session_state.losowy_film = random.choice(wszystkie_id)
+        st.success("Wylosowano film! Znajdziesz go na górze strony głównej.")
+    else:
+        st.warning("Brak filmów w bazie.")
+
+# --- GŁÓWNY NAGŁÓWEK I WYSZUKIWARKA ---
 col_title, col_search = st.columns([2, 3])
 with col_title:
     st.title("🎬 ViShort")
@@ -182,16 +248,17 @@ with col_search:
 
 st.markdown("---")
 
-# --- ZAKŁADKA: DODAJ FILM ---
-if menu == "Dodaj film":
+# --- ZAKŁADKA: DODAJ FILM (Funkcja 16, 17, 19, 20) ---
+if menu == "➕ Dodaj film":
     st.header("➕ Opublikuj nowy film")
     with st.form("upload_form", clear_on_submit=True):
         tytul = st.text_input("Tytuł filmu:")
         opis_filmu = st.text_area("Opis filmu:")
+        kategoria = st.selectbox("Wybierz kategorię:", ["Humor", "Gaming", "Edukacja", "Vlogs", "Muzyka", "Inne"])
         
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            wideo = st.file_uploader("Wybierz plik wideo (mp4):", type=["mp4", "mov"])
+            wideo = st.file_uploader("Wybierz plik wideo (mp4, mov):", type=["mp4", "mov"])
         with col_f2:
             miniatura = st.file_uploader("Zdjęcie początkowe / Miniatura (opcjonalnie):", type=["png", "jpg", "jpeg"])
             
@@ -219,9 +286,9 @@ if menu == "Dodaj film":
                 conn = sqlite3.connect('baza.db')
                 cursor = conn.cursor()
                 cursor.execute('''
-                    INSERT INTO filmy (autor, tytul, opis_filmu, plik, miniatura, prawa_autorskie, czy_ai, lajki) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-                ''', (st.session_state.uzytkownik, tytul, opis_filmu, nazwa_wideo, nazwa_miniatury, prawa, ai_val))
+                    INSERT INTO filmy (autor, tytul, opis_filmu, plik, miniatura, prawa_autorskie, czy_ai, lajki, wyswietlenia, kategoria) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+                ''', (st.session_state.uzytkownik, tytul, opis_filmu, nazwa_wideo, nazwa_miniatury, prawa, ai_val, kategoria))
                 conn.commit()
                 conn.close()
                 
@@ -230,8 +297,8 @@ if menu == "Dodaj film":
             else:
                 st.error("Podaj tytuł i wybierz plik wideo!")
 
-# --- ZAKŁADKA: MOJE KONTO ---
-elif menu == "Moje Konto":
+# --- ZAKŁADKA: MOJE KONTO (Funkcja 8, 15, 18) ---
+elif menu == "⚙️ Moje Konto":
     st.header("⚙️ Ustawienia Konta i Statystyki")
     
     conn = sqlite3.connect('baza.db')
@@ -239,16 +306,18 @@ elif menu == "Moje Konto":
     cursor.execute('SELECT nazwa, opis, zdjecie_profilowe, tlo_profilu, linki, ostatnia_zmiana_nazwy FROM uzytkownicy WHERE nazwa = ?', (st.session_state.uzytkownik,))
     u_data = cursor.fetchone()
     
-    cursor.execute('SELECT COUNT(*), SUM(lajki) FROM filmy WHERE autor = ?', (st.session_state.uzytkownik,))
-    stat_filmy, stat_lajki = cursor.fetchone()
+    cursor.execute('SELECT COUNT(*), SUM(lajki), SUM(wyswietlenia) FROM filmy WHERE autor = ?', (st.session_state.uzytkownik,))
+    stat_filmy, stat_lajki, stat_wyswietlenia = cursor.fetchone()
     stat_lajki = stat_lajki if stat_lajki else 0
+    stat_wyswietlenia = stat_wyswietlenia if stat_wyswietlenia else 0
     conn.close()
     
     st.subheader("📊 Statystyki Twojego Konta")
-    col_s1, col_s2, col_s3 = st.columns(3)
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
     col_s1.metric("Wrzucone filmy", stat_filmy)
-    col_s2.metric("Łącznie polubień (❤️)", stat_lajki)
-    col_s3.metric("Status konta", "Aktywne")
+    col_s2.metric("Polubienia (❤️)", stat_lajki)
+    col_s3.metric("Wyświetlenia (👁️)", stat_wyswietlenia)
+    col_s4.metric("Status konta", "Aktywne 🟢")
     
     st.markdown("---")
     st.subheader("✏️ Edytuj Profil")
@@ -257,7 +326,7 @@ elif menu == "Moje Konto":
     
     with st.form("profil_form"):
         nowa_nazwa = st.text_input("Nazwa użytkownika:", value=aktualna_nazwa)
-        nowy_opis = st.text_area("O mnie (opis profilu):", value=opis_p if opis_p else "")
+        nowy_opis = st.text_area("O mnie (opis profilu / status):", value=opis_p if opis_p else "")
         nowe_linki = st.text_input("Linki do Twoich stron:", value=linki_p if linki_p else "")
         
         col_e1, col_e2 = st.columns(2)
@@ -318,8 +387,32 @@ elif menu == "Moje Konto":
             st.success("Profil zaktualizowany!")
             st.rerun()
 
+    st.markdown("---")
+    st.subheader("🎬 Twoje opublikowane filmy (Zarządzanie)")
+    conn = sqlite3.connect('baza.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, tytul, lajki, wyswietlenia FROM filmy WHERE autor = ?', (st.session_state.uzytkownik,))
+    moje_filmy = cursor.fetchall()
+    conn.close()
+
+    if moje_filmy:
+        for m_id, m_tytul, m_lajki, m_wysw in moje_filmy:
+            col_m1, col_m2, col_m3 = st.columns([3, 1, 1])
+            col_m1.write(f"🎞️ **{m_tytul}** (❤️ {m_lajki} | 👁️ {m_wysw})")
+            if col_m3.button("🗑️ Usuń", key=f"del_film_{m_id}"):
+                conn = sqlite3.connect('baza.db')
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM filmy WHERE id = ?', (m_id,))
+                cursor.execute('DELETE FROM komentarze WHERE film_id = ?', (m_id,))
+                conn.commit()
+                conn.close()
+                st.success("Usunięto film.")
+                st.rerun()
+    else:
+            st.info("Nie masz jeszcze żadnych filmów.")
+
 # --- ZAKŁADKA: ZNAJOMI I CHAT ---
-elif menu == "Znajomi i Chat":
+elif menu == "👥 Znajomi i Chat":
     st.header("👥 Znajomi i Wiadomości")
     
     conn = sqlite3.connect('baza.db')
@@ -394,34 +487,90 @@ elif menu == "Znajomi i Chat":
                 cursor = conn.cursor()
                 cursor.execute('INSERT INTO wiadomosci (nadawca, odbiorca, tekst) VALUES (?, ?, ?)', 
                                (st.session_state.uzytkownik, wybrany_znajomy, tekst_wiadomosci))
+                # Dodaj powiadomienie dla odbiorcy
+                cursor.execute('INSERT INTO powiadomienia (odbiorca, tekst, przeczytane) VALUES (?, ?, 0)',
+                               (wybrany_znajomy, f"Nowa wiadomość od {st.session_state.uzytkownik}"))
                 conn.commit()
                 conn.close()
                 st.rerun()
         else:
             st.info("Wybierz znajomego z listy.")
 
-# --- ZAKŁADKA: STRONA GŁÓWNA ---
+# --- ZAKŁADKA: POWIADOMIENIA (Funkcja 2) ---
+elif menu.startswith("🔔 Powiadomienia"):
+    st.header("🔔 Twoje Powiadomienia")
+    
+    conn = sqlite3.connect('baza.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, tekst, przeczytane FROM powiadomienia WHERE odbiorca = ? ORDER BY id DESC', (st.session_state.uzytkownik,))
+    powiadomienia = cursor.fetchall()
+    
+    # Oznacz jako przeczytane
+    cursor.execute('UPDATE powiadomienia SET przeczytane = 1 WHERE odbiorca = ?', (st.session_state.uzytkownik,))
+    conn.commit()
+    conn.close()
+
+    if powiadomienia:
+        for p_id, p_tekst, p_prze in powiadomienia:
+            status_p = "📌" if p_prze == 0 else "✔️"
+            st.write(f"{status_p} {p_tekst}")
+    else:
+        st.info("Brak powiadomień.")
+
+# --- ZAKŁADKA: O NAS / ZASADY (Funkcja 9) ---
+elif menu == "ℹ️ O nas / Zasady":
+    st.header("ℹ️ O platformie ViShort i Regulamin")
+    st.markdown("""
+    Witaj w **ViShort** – nowoczesnej platformie wideo stworzonej z pasji do dzielenia się krótkimi materiałami i interakcji społecznościowych!
+    
+    ### 🛡️ Zasady społeczności:
+    1. **Szacunek przede wszystkim** – Bądź miły dla innych użytkowników w komentarzach i czacie.
+    2. **Autorskie treści** – Publikuj materiały, do których masz prawa, lub oznaczaj filmy wygenerowane przez sztuczną inteligencję (AI).
+    3. **Bezpieczeństwo** – Nie spamuj i nie naruszaj prywatności innych.
+    
+    Dziękujemy, że jesteś częścią naszej społeczności! 🎬❤️
+    """)
+
+# --- ZAKŁADKA: STRONA GŁÓWNA (Funkcja 3, 4, 6, 13, 14, 19) ---
 else:
     conn = sqlite3.connect('baza.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT id, autor, tytul, opis_filmu, plik, miniatura, prawa_autorskie, czy_ai, lajki FROM filmy ORDER BY id DESC')
+    
+    # Obsługa sortowania (Funkcja 14)
+    order_query = "ORDER BY id DESC"
+    if tryb_sortowania == "Najpopularniejsze (❤️)":
+        order_query = "ORDER BY lajki DESC"
+    elif tryb_sortowania == "Najczęściej odtwarzane (👁️)":
+        order_query = "ORDER BY wyswietlenia DESC"
+        
+    cursor.execute(f'SELECT id, autor, tytul, opis_filmu, plik, miniatura, prawa_autorskie, czy_ai, lajki, wyswietlenia, kategoria FROM filmy {order_query}')
     filmy = cursor.fetchall()
     conn.close()
 
+    # Filtry
     if ukryj_ai:
         filmy = [f for f in filmy if f[7] == 0]
+
+    if wybrana_kategoria_filtr != "Wszystkie":
+        filmy = [f for f in filmy if f[10] == wybrana_kategoria_filtr]
 
     if szukaj:
         filmy = [f for f in filmy if szukaj.lower() in f[1].lower() or szukaj.lower() in f[2].lower() or szukaj.lower() in f[3].lower()]
 
+    # Jeśli użyto szczęśliwego trafu, przesuń wylosowany film na początek
+    if 'losowy_film' in st.session_state:
+        target_id = st.session_state.losowy_film
+        filmy = sorted(filmy, key=lambda x: 0 if x[0] == target_id else 1)
+        del st.session_state.losowy_film
+
     if filmy:
-        for film_id, autor, tytul, opis_filmu, plik, miniatura, prawa_autorskie, czy_ai, lajki in filmy:
+        for film_id, autor, tytul, opis_filmu, plik, miniatura, prawa_autorskie, czy_ai, lajki, wyswietlenia, kategoria in filmy:
             col_video, col_actions = st.columns([3, 1])
             
             with col_video:
                 st.subheader(tytul)
                 ai_badge = " | 🤖 **Zawiera AI**" if czy_ai == 1 else ""
-                st.caption(f"👤 Autor: **{autor}** | 🛡️ {prawa_autorskie}{ai_badge}")
+                st.caption(f"👤 Autor: **{autor}** | 📂 Kategoria: `{kategoria}` | 🛡️ {prawa_autorskie}{ai_badge} | 👁️ Wyświetlenia: **{wyswietlenia}**")
                 if opis_filmu:
                     st.write(opis_filmu)
                 
@@ -429,6 +578,15 @@ else:
                 sciezka_mini = os.path.join('uploads', miniatura) if miniatura else ""
                 
                 if os.path.exists(sciezka_pliku):
+                    # Zliczanie wyświetlenia (Funkcja 3) przy renderowaniu wideo
+                    if f"viewed_{film_id}" not in st.session_state:
+                        conn = sqlite3.connect('baza.db')
+                        cursor = conn.cursor()
+                        cursor.execute('UPDATE filmy SET wyswietlenia = wyswietlenia + 1 WHERE id = ?', (film_id,))
+                        conn.commit()
+                        conn.close()
+                        st.session_state[f"viewed_{film_id}"] = True
+
                     if miniatura and os.path.exists(sciezka_mini):
                         st.video(sciezka_pliku, poster=sciezka_mini)
                     else:
@@ -439,26 +597,53 @@ else:
             with col_actions:
                 st.write("") 
                 st.write("")
-                if st.button(f"❤️ {lajki}", key=f"like_{film_id}"):
+                if st.button(f"❤️ Polub ({lajki})", key=f"like_{film_id}"):
                     conn = sqlite3.connect('baza.db')
                     cursor = conn.cursor()
                     cursor.execute('UPDATE filmy SET lajki = lajki + 1 WHERE id = ?', (film_id,))
+                    # Powiadomienie dla autora filmu
+                    cursor.execute('SELECT autor FROM filmy WHERE id = ?', (film_id,))
+                    aut_f = cursor.fetchone()[0]
+                    if aut_f != st.session_state.uzytkownik:
+                        cursor.execute('INSERT INTO powiadomienia (odbiorca, tekst, przeczytane) VALUES (?, ?, 0)',
+                                       (aut_f, f"Użytkownik {st.session_state.uzytkownik} polubił Twój film '{tytul}'!"))
                     conn.commit()
                     conn.close()
                     st.rerun()
                 
-                st.markdown("💬 **Komentarze**")
+                # Funkcja 5: Zgłoś film
+                with st.popover("⚠️ Zgłoś"):
+                    powod_zgl = st.text_input("Powód zgłoszenia:", key=f"z_pow_{film_id}")
+                    if st.button("Wyślij zgłoszenie", key=f"btn_z_{film_id}"):
+                        if powod_zgl:
+                            conn = sqlite3.connect('baza.db')
+                            cursor = conn.cursor()
+                            cursor.execute('INSERT INTO zgloszenia (film_id, powod, zglaszajacy) VALUES (?, ?, ?)', (film_id, powod_zgl, st.session_state.uzytkownik))
+                            conn.commit()
+                            conn.close()
+                            st.success("Zgłoszenie wysłane do administratora.")
+                        else:
+                            st.warning("Podaj powód zgłoszenia.")
 
-            with st.expander(f"Pokaż/Dodaj komentarze do: {tytul}"):
+            # Sekcja komentarzy (z lajkami komentarzy - Funkcja 6)
+            with st.expander(f"💬 Komentarze do: {tytul}"):
                 conn = sqlite3.connect('baza.db')
                 cursor = conn.cursor()
-                cursor.execute('SELECT autor, tekst FROM komentarze WHERE film_id = ?', (film_id,))
+                cursor.execute('SELECT id, autor, tekst, lajki FROM komentarze WHERE film_id = ?', (film_id,))
                 komentarze = cursor.fetchall()
                 conn.close()
                 
                 if komentarze:
-                    for k_autor, k_tekst in komentarze:
-                        st.markdown(f"**{k_autor}**: {k_tekst}")
+                    for k_id, k_autor, k_tekst, k_lajki in komentarze:
+                        col_k1, col_k2 = st.columns([5, 1])
+                        col_k1.markdown(f"**{k_autor}**: {k_tekst}")
+                        if col_k2.button(f"❤️ {k_lajki}", key=f"klike_{k_id}"):
+                            conn = sqlite3.connect('baza.db')
+                            cursor = conn.cursor()
+                            cursor.execute('UPDATE komentarze SET lajki = lajki + 1 WHERE id = ?', (k_id,))
+                            conn.commit()
+                            conn.close()
+                            st.rerun()
                 else:
                     st.info("Brak komentarzy. Bądź pierwszy!")
                 
@@ -468,11 +653,19 @@ else:
                     if wyslij_kom and nowy_kom:
                         conn = sqlite3.connect('baza.db')
                         cursor = conn.cursor()
-                        cursor.execute('INSERT INTO komentarze (film_id, autor, tekst) VALUES (?, ?, ?)', (film_id, st.session_state.uzytkownik, nowy_kom))
+                        cursor.execute('INSERT INTO komentarze (film_id, autor, tekst, lajki) VALUES (?, ?, ?, 0)', (film_id, st.session_state.uzytkownik, nowy_kom))
+                        
+                        # Powiadomienie dla autora filmu
+                        cursor.execute('SELECT autor FROM filmy WHERE id = ?', (film_id,))
+                        aut_f = cursor.fetchone()[0]
+                        if aut_f != st.session_state.uzytkownik:
+                            cursor.execute('INSERT INTO powiadomienia (odbiorca, tekst, przeczytane) VALUES (?, ?, 0)',
+                                           (aut_f, f"Nowy komentarz od {st.session_state.uzytkownik} pod filmem '{tytul}'"))
+                        
                         conn.commit()
                         conn.close()
                         st.rerun()
 
             st.markdown("---")
     else:
-        st.info("Brak filmów spełniających kryteria.")
+        st.info("Brak filmów spełniających wybrane kryteria.")
