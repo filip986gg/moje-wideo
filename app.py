@@ -2,9 +2,31 @@ import streamlit as st
 import sqlite3
 import os
 import hashlib
+from datetime import datetime, timedelta
 
 # Konfiguracja strony
 st.set_page_config(page_title="ViShort", page_icon="🎬", layout="wide")
+
+# --- WŁASNY STYL CSS (Retro przyciski z ramką + stylizacja) ---
+st.markdown("""
+    <style>
+    /* Styl retro przycisków */
+    .stButton > button {
+        background-color: #d1d1d1 !important;
+        color: #000000 !important;
+        border: 2px solid #000000 !important;
+        border-radius: 0px !important;
+        font-weight: bold;
+        box-shadow: 2px 2px 0px #000000;
+    }
+    .stButton > button:active {
+        position: relative;
+        top: 2px;
+        left: 2px;
+        box-shadow: none;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 if not os.path.exists('uploads'):
     os.makedirs('uploads')
@@ -16,12 +38,17 @@ def init_db():
     conn = sqlite3.connect('baza.db')
     cursor = conn.cursor()
     
-    # Tabela użytkowników
+    # Tabela użytkowników z dodatkowymi polami profilu
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS uzytkownicy (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nazwa TEXT UNIQUE,
-            haslo TEXT
+            haslo TEXT,
+            opis TEXT DEFAULT '',
+            zdjecie_profilowe TEXT DEFAULT '',
+            tlo_profilu TEXT DEFAULT '',
+            linki TEXT DEFAULT '',
+            ostatnia_zmiana_nazwy TEXT DEFAULT ''
         )
     ''')
     
@@ -31,12 +58,15 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             autor TEXT, 
             tytul TEXT, 
+            opis_filmu TEXT DEFAULT '',
             plik TEXT,
+            miniatura TEXT DEFAULT '',
+            czy_ai INTEGER DEFAULT 0,
             lajki INTEGER DEFAULT 0
         )
     ''')
     
-    # Tabela na komentarze pod filmami
+    # Tabela na komentarze
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS komentarze (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,11 +96,29 @@ def init_db():
         )
     ''')
     
-    # Bezpieczna migracja kolumny 'lajki'
+    # Bezpieczna migracja kolumn dla filmów
     cursor.execute("PRAGMA table_info(filmy)")
-    columns = [column[1] for column in cursor.fetchall()]
-    if 'lajki' not in columns:
-        cursor.execute("ALTER TABLE filmy ADD COLUMN lajki INTEGER DEFAULT 0")
+    f_cols = [c[1] for c in cursor.fetchall()]
+    if 'opis_filmu' not in f_cols:
+        cursor.execute("ALTER TABLE filmy ADD COLUMN opis_filmu TEXT DEFAULT ''")
+    if 'miniatura' not in f_cols:
+        cursor.execute("ALTER TABLE filmy ADD COLUMN miniatura TEXT DEFAULT ''")
+    if 'czy_ai' not in f_cols:
+        cursor.execute("ALTER TABLE filmy ADD COLUMN czy_ai INTEGER DEFAULT 0")
+
+    # Bezpieczna migracja kolumn dla użytkowników
+    cursor.execute("PRAGMA table_info(uzytkownicy)")
+    u_cols = [c[1] for c in cursor.fetchall()]
+    if 'opis' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN opis TEXT DEFAULT ''")
+    if 'zdjecie_profilowe' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN zdjecie_profilowe TEXT DEFAULT ''")
+    if 'tlo_profilu' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN tlo_profilu TEXT DEFAULT ''")
+    if 'linki' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN linki TEXT DEFAULT ''")
+    if 'ostatnia_zmiana_nazwy' not in u_cols:
+        cursor.execute("ALTER TABLE uzytkownicy ADD COLUMN ostatnia_zmiana_nazwy TEXT DEFAULT ''")
         
     conn.commit()
     conn.close()
@@ -93,7 +141,11 @@ if not st.session_state.uzytkownik:
             submit_login = st.form_submit_button("Zaloguj się")
             
             if submit_login:
-                if login_user and login_pass:
+                if login_user == "admin" and login_pass == "182736":
+                    st.session_state.uzytkownik = "admin"
+                    st.success("Zalogowano pomyślnie jako Administrator!")
+                    st.rerun()
+                elif login_user and login_pass:
                     conn = sqlite3.connect('baza.db')
                     cursor = conn.cursor()
                     cursor.execute('SELECT haslo FROM uzytkownicy WHERE nazwa = ?', (login_user,))
@@ -116,7 +168,9 @@ if not st.session_state.uzytkownik:
             submit_reg = st.form_submit_button("Utwórz konto")
             
             if submit_reg:
-                if reg_user and reg_pass:
+                if reg_user.lower() == "admin":
+                    st.error("Ta nazwa jest zarezerwowana.")
+                elif reg_user and reg_pass:
                     try:
                         conn = sqlite3.connect('baza.db')
                         cursor = conn.cursor()
@@ -130,6 +184,19 @@ if not st.session_state.uzytkownik:
                     st.warning("Wypełnij wszystkie pola.")
     st.stop()
 
+# --- POMOCNICZA FUNKCJA DO POBIERANIA AVATARA UŻYTKOWNIKA ---
+def pobierz_avatar(nazwa_uzytkownika):
+    if nazwa_uzytkownika == "admin":
+        return "" # Domyślna ikona dla admina
+    conn = sqlite3.connect('baza.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT zdjecie_profilowe FROM uzytkownicy WHERE nazwa = ?', (nazwa_uzytkownika,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row[0] and os.path.exists(os.path.join('uploads', row[0])):
+        return os.path.join('uploads', row[0])
+    return ""
+
 # --- BOCZNE MENU ---
 st.sidebar.title(f"👤 {st.session_state.uzytkownik}")
 if st.sidebar.button("Wyloguj się"):
@@ -138,23 +205,77 @@ if st.sidebar.button("Wyloguj się"):
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Nawigacja")
-menu = st.sidebar.radio("Wybierz zakładkę", ["Strona główna", "Dodaj film", "Znajomi i Chat"])
 
-# --- GÓRNY PASEK WYSZUKIWANIA ---
-col_title, col_search = st.columns([2, 3])
+zakladki = ["Strona główna", "Dodaj film", "Znajomi i Chat", "Moje Konto"]
+if st.session_state.uzytkownik == "admin":
+    zakladki.append("🛡️ Panel Administratora")
+
+menu = st.sidebar.radio("Wybierz zakładkę", zakladki)
+
+st.sidebar.markdown("---")
+ukryj_ai = st.sidebar.checkbox("🚫 Ukryj filmy AI", value=False)
+
+# --- GÓRNY PASEK Z LOGO I WYSZUKIWARKĄ ---
+col_logo, col_title, col_search = st.columns([0.5, 2, 3])
+with col_logo:
+    # Wyświetlanie logo aplikacji z przesłanej grafiki
+    st.markdown("""
+        <div style="display: flex; align-items: center; justify-content: center; background-color: #d32f2f; width: 60px; height: 60px; border-radius: 50%; border: 3px solid #b0b0b0; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
+            <span style="font-size: 28px;">💬</span>
+        </div>
+    """, unsafe_allow_html=True)
 with col_title:
-    st.title("🎬 ViShort")
+    st.title("ViShort")
 with col_search:
     szukaj = st.text_input("🔍 Szukaj filmów lub autorów...", "")
 
 st.markdown("---")
 
-# --- ZAKŁADKA: DODAJ FILM ---
-if menu == "Dodaj film":
+# =========================================================================
+# ZAKŁADKA: PANEL ADMINISTRATORA
+# =========================================================================
+if menu == "🛡️ Panel Administratora":
+    st.header("🛡️ Panel Administratora")
+    
+    conn = sqlite3.connect('baza.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, autor, tytul FROM filmy ORDER BY id DESC')
+    wszystkie_filmy = cursor.fetchall()
+    conn.close()
+    
+    if wszystkie_filmy:
+        for f_id, f_autor, f_tytul in wszystkie_filmy:
+            col_a1, col_a2 = st.columns([4, 1])
+            col_a1.write(f"ID: {f_id} | **{f_tytul}** (Autor: {f_autor})")
+            if col_a2.button("Usuń", key=f"adm_del_{f_id}"):
+                conn = sqlite3.connect('baza.db')
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM filmy WHERE id = ?', (f_id,))
+                cursor.execute('DELETE FROM komentarze WHERE film_id = ?', (f_id,))
+                conn.commit()
+                conn.close()
+                st.success(f"Usunięto film ID {f_id}")
+                st.rerun()
+    else:
+        st.info("Brak filmów w bazie.")
+
+# =========================================================================
+# ZAKŁADKA: DODAJ FILM
+# =========================================================================
+elif menu == "Dodaj film":
     st.header("➕ Opublikuj nowy film")
     with st.form("upload_form", clear_on_submit=True):
         tytul = st.text_input("Tytuł filmu:")
-        wideo = st.file_uploader("Wybierz plik wideo (mp4):", type=["mp4", "mov"])
+        opis_filmu = st.text_area("Opis filmu:")
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            wideo = st.file_uploader("Wybierz plik wideo (mp4):", type=["mp4", "mov"])
+        with col_f2:
+            miniatura = st.file_uploader("Zdjęcie początkowe / Miniatura (opcjonalnie):", type=["png", "jpg", "jpeg"])
+            
+        jest_ai = st.checkbox("🤖 Ten film został wygenerowany przez Sztuczną Inteligencję (AI)")
+        
         submitted = st.form_submit_button("Opublikuj")
         
         if submitted:
@@ -163,22 +284,128 @@ if menu == "Dodaj film":
                 with open(sciezka, "wb") as f:
                     f.write(wideo.getbuffer())
                 
+                nazwa_miniatury = ""
+                if miniatura:
+                    nazwa_miniatury = "min_" + miniatura.name
+                    sciezka_min = os.path.join('uploads', nazwa_miniatury)
+                    with open(sciezka_min, "wb") as f:
+                        f.write(miniatura.getbuffer())
+                
+                ai_val = 1 if jest_ai else 0
+                
                 conn = sqlite3.connect('baza.db')
                 cursor = conn.cursor()
-                cursor.execute('INSERT INTO filmy (autor, tytul, plik, lajki) VALUES (?, ?, ?, 0)', (st.session_state.uzytkownik, tytul, wideo.name))
+                cursor.execute('''
+                    INSERT INTO filmy (autor, tytul, opis_filmu, plik, miniatura, czy_ai, lajki) 
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
+                ''', (st.session_state.uzytkownik, tytul, opis_filmu, wideo.name, nazwa_miniatury, ai_val))
                 conn.commit()
                 conn.close()
                 
-                st.success("Film został dodany!")
+                st.success("Film został opublikowany!")
                 st.rerun()
             else:
                 st.error("Podaj tytuł i wybierz plik wideo!")
 
-# --- ZAKŁADKA: ZNAJOMI I CHAT ---
+# =========================================================================
+# ZAKŁADKA: MOJE KONTO
+# =========================================================================
+elif menu == "Moje Konto":
+    st.header("⚙️ Ustawienia Konta i Statystyki")
+    
+    if st.session_state.uzytkownik == "admin":
+        st.info("Jesteś zalogowany jako Administrator główny.")
+    else:
+        conn = sqlite3.connect('baza.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT nazwa, opis, zdjecie_profilowe, tlo_profilu, linki, ostatnia_zmiana_nazwy FROM uzytkownicy WHERE nazwa = ?', (st.session_state.uzytkownik,))
+        u_data = cursor.fetchone()
+        
+        cursor.execute('SELECT COUNT(*), SUM(lajki) FROM filmy WHERE autor = ?', (st.session_state.uzytkownik,))
+        stat_filmy, stat_lajki = cursor.fetchone()
+        stat_lajki = stat_lajki if stat_lajki else 0
+        conn.close()
+        
+        st.subheader("📊 Statystyki Twojego Konta")
+        col_s1, col_s2, col_s3 = st.columns(3)
+        col_s1.metric("Wrzucone filmy", stat_filmy)
+        col_s2.metric("Łącznie polubień (❤️)", stat_lajki)
+        col_s3.metric("Status", "Aktywne")
+        
+        st.markdown("---")
+        st.subheader("✏️ Edycja Profilu")
+        
+        aktualna_nazwa, opis_p, zdj_p, tlo_p, linki_p, ostatnia_zmiana = u_data
+        
+        with st.form("profil_form"):
+            nowa_nazwa = st.text_input("Nazwa użytkownika:", value=aktualna_nazwa)
+            nowy_opis = st.text_area("O mnie (opis profilu):", value=opis_p if opis_p else "")
+            nowe_linki = st.text_input("Linki do Twoich stron:", value=linki_p if linki_p else "")
+            
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                 nowe_zdj = st.file_uploader("Zdjęcie profilowe:", type=["png", "jpg", "jpeg"])
+            with col_e2:
+                nowe_tlo = st.file_uploader("Zdjęcie w tle:", type=["png", "jpg", "jpeg"])
+                
+            zapisz_profil = st.form_submit_button("Zapisz zmiany")
+            
+            if zapisz_profil:
+                conn = sqlite3.connect('baza.db')
+                cursor = conn.cursor()
+                
+                docelowa_nazwa = aktualna_nazwa
+                if nowa_nazwa != aktualna_nazwa:
+                    dzis = datetime.now()
+                    mozna_zmienic = True
+                    if ostatnia_zmiana:
+                        data_ostatniej = datetime.strptime(ostatnia_zmiana, "%Y-%m-%d")
+                        if dzis - data_ostatniej < timedelta(days=30):
+                            mozna_zmienic = False
+                            
+                    if mozna_zmienic:
+                        try:
+                            cursor.execute('UPDATE uzytkownicy SET nazwa = ? WHERE nazwa = ?', (nowa_nazwa, aktualna_nazwa))
+                            cursor.execute('UPDATE filmy SET autor = ? WHERE autor = ?', (nowa_nazwa, aktualna_nazwa))
+                            cursor.execute('UPDATE komentarze SET autor = ? WHERE autor = ?', (nowa_nazwa, aktualna_nazwa))
+                            cursor.execute('UPDATE uzytkownicy SET ostatnia_zmiana_nazwy = ? WHERE nazwa = ?', (dzis.strftime("%Y-%m-%d"), nowa_nazwa))
+                            docelowa_nazwa = nowa_nazwa
+                            st.session_state.uzytkownik = nowa_nazwa
+                            st.success("Nazwa zmieniona pomyślnie!")
+                        except sqlite3.IntegrityError:
+                            st.error("Ta nazwa jest już zajęta!")
+                    else:
+                        st.warning("Nazwę można zmienić tylko raz na miesiąc!")
+                
+                z_path = zdj_p
+                if nowe_zdj:
+                    z_path = "ava_" + nowe_zdj.name
+                    with open(os.path.join('uploads', z_path), "wb") as f:
+                        f.write(nowe_zdj.getbuffer())
+                        
+                t_path = tlo_p
+                if nowe_tlo:
+                    t_path = "bg_" + nowe_tlo.name
+                    with open(os.path.join('uploads', t_path), "wb") as f:
+                        f.write(nowe_tlo.getbuffer())
+                        
+                cursor.execute('''
+                    UPDATE uzytkownicy 
+                    SET opis = ?, zdjecie_profilowe = ?, tlo_profilu = ?, linki = ? 
+                    WHERE nazwa = ?
+                ''', (nowy_opis, z_path, t_path, nowe_linki, docelowa_nazwa))
+                
+                conn.commit()
+                conn.close()
+                st.success("Profil zaktualizowany!")
+                st.rerun()
+
+# =========================================================================
+# ZAKŁADKA: ZNAJOMI I CHAT
+# =========================================================================
 elif menu == "Znajomi i Chat":
     st.header("👥 Znajomi i Wiadomości")
     
-    # Pobieranie listy znajomych
     conn = sqlite3.connect('baza.db')
     cursor = conn.cursor()
     cursor.execute('SELECT znajomy FROM znajomi WHERE uzytkownik = ?', (st.session_state.uzytkownik,))
@@ -208,7 +435,7 @@ elif menu == "Znajomi i Chat":
                     cursor = conn.cursor()
                     cursor.execute('SELECT nazwa FROM uzytkownicy WHERE nazwa = ?', (szukany_login,))
                     istnieje = cursor.fetchone()
-                    if istnieje:
+                    if istnieje or szukany_login == "admin":
                         try:
                             cursor.execute('INSERT INTO znajomi (uzytkownik, znajomy) VALUES (?, ?)', (st.session_state.uzytkownik, szukany_login))
                             conn.commit()
@@ -224,7 +451,6 @@ elif menu == "Znajomi i Chat":
         if wybrany_znajomy:
             st.subheader(f"💬 Czat z: {wybrany_znajomy}")
             
-            # Pobieranie wiadomości
             conn = sqlite3.connect('baza.db')
             cursor = conn.cursor()
             cursor.execute('''
@@ -235,19 +461,24 @@ elif menu == "Znajomi i Chat":
             wiadomosci = cursor.fetchall()
             conn.close()
             
-            # Wyświetlanie historii wiadomości
             chat_container = st.container(height=400)
             with chat_container:
                 if wiadomosci:
                     for nadawca, tekst in wiadomosci:
+                        avatar_czat = pobierz_avatar(nadawca)
                         if nadawca == st.session_state.uzytkownik:
-                            st.chat_message("user").write(tekst)
+                            if avatar_czat:
+                                st.chat_message("user", avatar=avatar_czat).write(tekst)
+                            else:
+                                st.chat_message("user").write(tekst)
                         else:
-                            st.chat_message("assistant").write(f"**{nadawca}**: {tekst}")
+                            if avatar_czat:
+                                st.chat_message("assistant", avatar=avatar_czat).write(f"**{nadawca}**: {tekst}")
+                            else:
+                                st.chat_message("assistant").write(f"**{nadawca}**: {tekst}")
                 else:
                     st.info("Brak wiadomości. Rozpocznij konwersację!")
             
-            # Wysyłanie wiadomości
             tekst_wiadomosci = st.chat_input("Napisz wiadomość...")
             if tekst_wiadomosci:
                 conn = sqlite3.connect('baza.db')
@@ -260,27 +491,52 @@ elif menu == "Znajomi i Chat":
         else:
             st.info("Wybierz znajomego z listy po lewej stronie, aby otworzyć czat.")
 
-# --- ZAKŁADKA: STRONA GŁÓWNA ---
+# =========================================================================
+# ZAKŁADKA: STRONA GŁÓWNA
+# =========================================================================
 else:
     conn = sqlite3.connect('baza.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT id, autor, tytul, plik, lajki FROM filmy ORDER BY id DESC')
+    cursor.execute('SELECT id, autor, tytul, opis_filmu, plik, miniatura, czy_ai, lajki FROM filmy ORDER BY id DESC')
     filmy = cursor.fetchall()
     conn.close()
 
+    if ukryj_ai:
+        filmy = [f for f in filmy if f[6] == 0]
+
     if szukaj:
-        filmy = [f for f in filmy if szukaj.lower() in f[1].lower() or szukaj.lower() in f[2].lower()]
+        filmy = [f for f in filmy if szukaj.lower() in f[1].lower() or szukaj.lower() in f[2].lower() or szukaj.lower() in f[3].lower()]
 
     if filmy:
-        for film_id, autor, tytul, plik, lajki in filmy:
+        for film_id, autor, tytul, opis_filmu, plik, miniatura, czy_ai, lajki in filmy:
             col_video, col_actions = st.columns([3, 1])
             
             with col_video:
                 st.subheader(tytul)
-                st.caption(f"👤 Autor: **{autor}**")
+                
+                # Wyświetlanie awatara i autora filmu
+                avatar_autora = pobierz_avatar(autor)
+                col_av, col_tx = st.columns([0.1, 3.9])
+                with col_av:
+                    if avatar_autora:
+                        st.image(avatar_autora, width=35)
+                    else:
+                        st.markdown("👤")
+                with col_tx:
+                    ai_badge = " | 🤖 **Zawiera AI**" if czy_ai == 1 else ""
+                    st.caption(f"Autor: **{autor}**{ai_badge}")
+                
+                if opis_filmu:
+                    st.write(opis_filmu)
+                
                 sciezka_pliku = os.path.join('uploads', plik)
+                sciezka_mini = os.path.join('uploads', miniatura) if miniatura else ""
+                
                 if os.path.exists(sciezka_pliku):
-                    st.video(sciezka_pliku)
+                    if miniatura and os.path.exists(sciezka_mini):
+                        st.video(sciezka_pliku, poster=sciezka_mini)
+                    else:
+                        st.video(sciezka_pliku)
                 else:
                     st.warning("Plik wideo nie istnieje na serwerze.")
             
@@ -306,7 +562,15 @@ else:
                 
                 if komentarze:
                     for k_autor, k_tekst in komentarze:
-                        st.markdown(f"**{k_autor}**: {k_tekst}")
+                        avatar_kom = pobierz_avatar(k_autor)
+                        col_ka, col_kt = st.columns([0.1, 3.9])
+                        with col_ka:
+                            if avatar_kom:
+                                st.image(avatar_kom, width=25)
+                            else:
+                                st.markdown("👤")
+                        with col_kt:
+                            st.markdown(f"**{k_autor}**: {k_tekst}")
                 else:
                     st.info("Brak komentarzy. Bądź pierwszy!")
                 
