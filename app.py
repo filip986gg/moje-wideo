@@ -2,11 +2,9 @@ import streamlit as st
 import sqlite3
 import os
 import hashlib
-from datetime import datetime, timedelta
-import random
 
-# --- KONFIGURACJA STRONY ---
-st.set_page_config(page_title="ViShort Mega Pro", page_icon="🎬", layout="wide")
+# Konfiguracja strony
+st.set_page_config(page_title="ViShort", page_icon="🎬", layout="wide")
 
 if not os.path.exists('uploads'):
     os.makedirs('uploads')
@@ -14,74 +12,41 @@ if not os.path.exists('uploads'):
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-# --- INICJALIZACJA BAZY DANYCH ---
 def init_db():
     conn = sqlite3.connect('baza.db')
     cursor = conn.cursor()
     
-    # Użytkownicy
+    # Tabela użytkowników
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS uzytkownicy (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nazwa TEXT UNIQUE,
-            haslo TEXT,
-            opis TEXT DEFAULT '',
-            zdjecie_profilowe TEXT DEFAULT '',
-            tlo_profilu TEXT DEFAULT '',
-            linki TEXT DEFAULT '',
-            ostatnia_zmiana_nazwy TEXT DEFAULT '',
-            punkty INTEGER DEFAULT 0,
-            ostatnie_logowanie TEXT DEFAULT '',
-            status_konta TEXT DEFAULT 'Aktywne',
-            wyrozniony_film_id INTEGER DEFAULT 0
+            haslo TEXT
         )
     ''')
     
-    # Filmy
+    # Tabela filmów
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS filmy (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             autor TEXT, 
             tytul TEXT, 
-            opis_filmu TEXT DEFAULT '',
             plik TEXT,
-            miniatura TEXT DEFAULT '',
-            prawa_autorskie TEXT DEFAULT 'Zweryfikowane (Czyste)',
-            czy_ai INTEGER DEFAULT 0,
-            lajki INTEGER DEFAULT 0,
-            dislajki INTEGER DEFAULT 0,
-            wyswietlenia INTEGER DEFAULT 0,
-            kategoria TEXT DEFAULT 'Inne',
-            data_publikacji TEXT DEFAULT '',
-            tagi TEXT DEFAULT '',
-            reakcje_ogien INTEGER DEFAULT 0,
-            reakcje_smiech INTEGER DEFAULT 0,
-            reakcje_szok INTEGER DEFAULT 0
+            lajki INTEGER DEFAULT 0
         )
     ''')
     
-    # Komentarze
+    # Tabela na komentarze pod filmami
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS komentarze (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             film_id INTEGER,
             autor TEXT,
-            tekst TEXT,
-            lajki INTEGER DEFAULT 0,
-            przypniety INTEGER DEFAULT 0
+            tekst TEXT
         )
     ''')
     
-    # Obserwujący i Znajomi
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS obserwujacy (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            obserwujacy TEXT,
-            tworca TEXT,
-            UNIQUE(obserwujacy, tworca)
-        )
-    ''')
-    
+    # Tabela znajomych
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS znajomi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,17 +56,7 @@ def init_db():
         )
     ''')
     
-    # Historia oglądania
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS historia (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            uzytkownik TEXT,
-            film_id INTEGER,
-            data_obejrzenia TEXT
-        )
-    ''')
-    
-    # Czat i powiadomienia
+    # Tabela wiadomości czatu
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS wiadomosci (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,70 +66,23 @@ def init_db():
         )
     ''')
     
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS powiadomienia (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            odbiorca TEXT,
-            tekst TEXT,
-            przeczytane INTEGER DEFAULT 0
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS zgloszenia (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            film_id INTEGER,
-            powod TEXT,
-            zglaszajacy TEXT
-        )
-    ''')
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS logi_admina (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            czas TEXT,
-            dzialanie TEXT
-        )
-    ''')
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ogloszenia (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tresc TEXT
-        )
-    ''')
-
-    # Bezpieczna migracja kolumn
-    def dodaj_kolumne(tabela, kolumna, definicja):
-        cursor.execute(f"PRAGMA table_info({tabela})")
-        cols = [c[1] for c in cursor.fetchall()]
-        if kolumna not in cols:
-            cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN {kolumna} {definicja}")
-
-    dodaj_kolumne('uzytkownicy', 'punkty', 'INTEGER DEFAULT 0')
-    dodaj_kolumne('uzytkownicy', 'ostatnie_logowanie', "TEXT DEFAULT ''")
-    dodaj_kolumne('uzytkownicy', 'status_konta', "TEXT DEFAULT 'Aktywne'")
-    dodaj_kolumne('uzytkownicy', 'wyrozniony_film_id', 'INTEGER DEFAULT 0')
-    
-    dodaj_kolumne('filmy', 'dislajki', 'INTEGER DEFAULT 0')
-    dodaj_kolumne('filmy', 'data_publikacji', "TEXT DEFAULT ''")
-    dodaj_kolumne('filmy', 'tagi', "TEXT DEFAULT ''")
-    dodaj_kolumne('filmy', 'reakcje_ogien', 'INTEGER DEFAULT 0')
-    dodaj_kolumne('filmy', 'reakcje_smiech', 'INTEGER DEFAULT 0')
-    dodaj_kolumne('filmy', 'reakcje_szok', 'INTEGER DEFAULT 0')
-
+    # Bezpieczna migracja kolumny 'lajki'
+    cursor.execute("PRAGMA table_info(filmy)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'lajki' not in columns:
+        cursor.execute("ALTER TABLE filmy ADD COLUMN lajki INTEGER DEFAULT 0")
+        
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- SESJA UŻYTKOWNIKA ---
+# --- SYSTEM LOGOWANIA I REJESTRACJI ---
 if 'uzytkownik' not in st.session_state:
     st.session_state.uzytkownik = ""
 
-# --- LOGOWANIE I REJESTRACJA ---
 if not st.session_state.uzytkownik:
-    st.title("🎬 ViShort Mega Pro - Zaloguj się")
+    st.title("🎬 Witaj w ViShort - Zaloguj się lub Zarejestruj")
     
     tab1, tab2 = st.tabs(["🔑 Logowanie", "📝 Rejestracja"])
     
@@ -185,320 +93,234 @@ if not st.session_state.uzytkownik:
             submit_login = st.form_submit_button("Zaloguj się")
             
             if submit_login:
-                if login_user == "admin" and login_pass == "182736":
-                    st.session_state.uzytkownik = "admin"
-                    st.success("Zalogowano jako Administrator!")
-                    st.rerun()
-                elif login_user and login_pass:
+                if login_user and login_pass:
                     conn = sqlite3.connect('baza.db')
                     cursor = conn.cursor()
-                    cursor.execute('SELECT haslo, status_konta FROM uzytkownicy WHERE nazwa = ?', (login_user,))
+                    cursor.execute('SELECT haslo FROM uzytkownicy WHERE nazwa = ?', (login_user,))
                     wynik = cursor.fetchone()
+                    conn.close()
                     
-                    if wynik:
-                        haslo_db, status_k = wynik
-                        if status_k == "Zablokowane":
-                            st.error("Twoje konto zostało zablokowane przez administratora.")
-                        elif haslo_db == hash_password(login_pass):
-                            dzis = datetime.now().strftime("%Y-%m-%d")
-                            cursor.execute('SELECT ostatnie_logowanie FROM uzytkownicy WHERE nazwa = ?', (login_user,))
-                            ost_log = cursor.fetchone()[0]
-                            if ost_log != dzis:
-                                cursor.execute('UPDATE uzytkownicy SET ostatnie_logowanie = ?, punkty = punkty + 15 WHERE nazwa = ?', (dzis, login_user))
-                                st.toast("🎁 Codzienny bonus: +15 punktów XP!", icon="🎉")
-                            conn.commit()
-                            conn.close()
-                            st.session_state.uzytkownik = login_user
-                            st.success("Zalogowano pomyślnie!")
-                            st.rerun()
-                        else:
-                            conn.close()
-                            st.error("Błędne hasło!")
+                    if wynik and wynik[0] == hash_password(login_pass):
+                        st.session_state.uzytkownik = login_user
+                        st.success("Zalogowano pomyślnie!")
+                        st.rerun()
                     else:
-                        conn.close()
-                        st.error("Użytkownik nie istnieje!")
+                        st.error("Błędna nazwa użytkownika lub hasło!")
                 else:
-                    st.warning("Uzupełnij pola.")
+                    st.warning("Wypełnij wszystkie pola.")
                     
     with tab2:
         with st.form("register_form"):
-            reg_user = st.text_input("Wybierz nazwę:")
-            reg_pass = st.text_input("Wybierz hasło:", type="password")
-            if st.form_submit_button("Zarejestruj się") and reg_user and reg_pass:
-                if reg_user.lower() == "admin":
-                    st.error("Ta nazwa jest zarezerwowana.")
-                else:
+            reg_user = st.text_input("Wybierz nazwę użytkownika:")
+            reg_pass = st.text_input("Wybierz silne hasło:", type="password")
+            submit_reg = st.form_submit_button("Utwórz konto")
+            
+            if submit_reg:
+                if reg_user and reg_pass:
                     try:
                         conn = sqlite3.connect('baza.db')
                         cursor = conn.cursor()
-                        cursor.execute('INSERT INTO uzytkownicy (nazwa, haslo, ostatnie_logowanie) VALUES (?, ?, ?)', 
-                                       (reg_user, hash_password(reg_pass), datetime.now().strftime("%Y-%m-%d")))
+                        cursor.execute('INSERT INTO uzytkownicy (nazwa, haslo) VALUES (?, ?)', (reg_user, hash_password(reg_pass)))
                         conn.commit()
                         conn.close()
-                        st.success("Konto utworzone! Możesz się zalogować.")
+                        st.success("Konto utworzone! Teraz możesz się zalogować.")
                     except sqlite3.IntegrityError:
-                        st.error("Taka nazwa jest już zajęta.")
+                        st.error("Taka nazwa użytkownika jest już zajęta.")
+                else:
+                    st.warning("Wypełnij wszystkie pola.")
     st.stop()
 
-# --- KOMUNIKAT ADMINA ---
-conn = sqlite3.connect('baza.db')
-cursor = conn.cursor()
-cursor.execute('SELECT tresc FROM ogloszenia ORDER BY id DESC LIMIT 1')
-glob_ogloszenie = cursor.fetchone()
-conn.close()
-
-if glob_ogloszenie:
-    st.info(f"📢 **Komunikat:** {glob_ogloszenie[0]}")
-
 # --- BOCZNE MENU ---
-st.sidebar.markdown(f"### 👤 {st.session_state.uzytkownik}")
-
-conn = sqlite3.connect('baza.db')
-cursor = conn.cursor()
-cursor.execute('SELECT COUNT(*) FROM powiadomienia WHERE odbiorca = ? AND przeczytane = 0', (st.session_state.uzytkownik,))
-nieprzeczytane = cursor.fetchone()[0]
-conn.close()
-
-notif_label = f"🔔 Powiadomienia ({nieprzeczytane})" if nieprzeczytane > 0 else "🔔 Powiadomienia"
-
+st.sidebar.title(f"👤 {st.session_state.uzytkownik}")
 if st.sidebar.button("Wyloguj się"):
     st.session_state.uzytkownik = ""
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📌 Nawigacja")
+st.sidebar.subheader("Nawigacja")
+menu = st.sidebar.radio("Wybierz zakładkę", ["Strona główna", "Dodaj film", "Znajomi i Chat"])
 
-lista_zakladek = [
-    "Strona główna", 
-    "⭐ Subskrypcje",
-    "🕒 Historia oglądania",
-    "➕ Dodaj film", 
-    "👥 Znajomi i Chat", 
-    "⚙️ Moje Konto", 
-    notif_label,
-    "ℹ️ O nas / Zasady"
-]
+# --- GÓRNY PASEK WYSZUKIWANIA ---
+col_title, col_search = st.columns([2, 3])
+with col_title:
+    st.title("🎬 ViShort")
+with col_search:
+    szukaj = st.text_input("🔍 Szukaj filmów lub autorów...", "")
 
-if st.session_state.uzytkownik == "admin":
-    lista_zakladek.insert(4, "🛡️ Panel Administratora")
-
-menu = st.sidebar.radio("Wybierz zakładkę", lista_zakladek)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Opcje widoku i filtrów")
-styl_widoku = st.sidebar.radio("Styl wyświetlania:", ["Pionowy strumień (Shorts)", "Siatka kafelková (Grid)"])
-ukryj_ai = st.sidebar.checkbox("🚫 Ukryj filmy AI", value=False)
-wybrana_kategoria = st.sidebar.selectbox("📂 Kategoria", ["Wszystkie", "Humor", "Gaming", "Edukacja", "Vlogs", "Muzyka", "Inne"])
-tryb_sortowania = st.sidebar.selectbox("📊 Sortowanie", ["Najnowsze", "Najpopularniejsze (❤️)", "Najczęściej odtwarzane (👁️)"])
-szukaj = st.sidebar.text_input("🔍 Szukaj wideo / hashtagów", "")
-
-if st.sidebar.button("🎲 Szczęśliwy Traf"):
-    conn = sqlite3.connect('baza.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT id FROM filmy')
-    ids = [r[0] for r in cursor.fetchall()]
-    conn.close()
-    if ids:
-        st.session_state.losowy_film = random.choice(ids)
-        st.success("Wylosowano film!")
-
-st.title("🎬 ViShort Mega Pro")
 st.markdown("---")
 
-# =========================================================================
-# 1. PANEL ADMINA
-# =========================================================================
-if menu == "🛡️ Panel Administratora":
-    st.header("🛡️ Panel Administratora")
-    tab1, tab2, tab3 = st.tabs(["🚨 Zgłoszenia", "👥 Użytkownicy", "📢 Ogłoszenia"])
-    with tab1:
-        conn = sqlite3.connect('baza.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, film_id, powod, zglaszajacy FROM zgloszenia')
-        zgloszenia = cursor.fetchall()
-        conn.close()
-        if zgloszenia:
-            for z_id, f_id, powod, zglaszajacy in zgloszenia:
-                st.warning(f"Zgłoszenie filmu ID **{f_id}** | Powód: {powod} (Od: {zglaszajacy})")
-                if st.button(f"Usuń film ID {f_id}", key=f"del_z_{z_id}"):
-                    conn = sqlite3.connect('baza.db')
-                    cursor = conn.cursor()
-                    cursor.execute('DELETE FROM filmy WHERE id = ?', (f_id,))
-                    cursor.execute('DELETE FROM zgloszenia WHERE id = ?', (z_id,))
-                    conn.commit()
-                    conn.close()
-                    st.success("Usunięto.")
-                    st.rerun()
-        else:
-            st.info("Brak zgłoszeń.")
-    with tab2:
-        conn = sqlite3.connect('baza.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT nazwa, status_konta FROM uzytkownicy')
-        for u_n, u_s in cursor.fetchall():
-            col1, col2 = st.columns([3, 1])
-            col1.write(f"Użytkownik: **{u_n}** | Status: `{u_s}`")
-            if u_s == "Aktywne":
-                if col2.button("Zablokuj", key=f"b_{u_n}"):
-                    conn = sqlite3.connect('baza.db')
-                    cursor = conn.cursor()
-                    cursor.execute('UPDATE uzytkownicy SET status_konta = "Zablokowane" WHERE nazwa = ?', (u_n,))
-                    conn.commit()
-                    conn.close()
-                    st.rerun()
-            else:
-                if col2.button("Odblokuj", key=f"ub_{u_n}"):
-                    conn = sqlite3.connect('baza.db')
-                    cursor = conn.cursor()
-                    cursor.execute('UPDATE uzytkownicy SET status_konta = "Aktywne" WHERE nazwa = ?', (u_n,))
-                    conn.commit()
-                    conn.close()
-                    st.rerun()
-        conn.close()
-    with tab3:
-        with st.form("ogloszenie_form"):
-            tresc = st.text_input("Nowy komunikat globalny:")
-            if st.form_submit_button("Opublikuj") and tresc:
-                conn = sqlite3.connect('baza.db')
-                cursor = conn.cursor()
-                cursor.execute('INSERT INTO ogloszenia (tresc) VALUES (?)', (tresc,))
-                conn.commit()
-                conn.close()
-                st.success("Opublikowano!")
-                st.rerun()
-
-# =========================================================================
-# 2. SUBSKRYPCJE
-# =========================================================================
-elif menu == "⭐ Subskrypcje":
-    st.header("⭐ Filmy obserwowanych twórców")
-    conn = sqlite3.connect('baza.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT tworca FROM obserwujacy WHERE obserwujacy = ?', (st.session_state.uzytkownik,))
-    obs = [r[0] for r in cursor.fetchall()]
-    if obs:
-        q = ','.join(['?'] * len(obs))
-        cursor.execute(f'SELECT id, autor, tytul, plik FROM filmy WHERE autor IN ({q}) ORDER BY id DESC', tuple(obs))
-        for f_id, autor, tytul, plik in cursor.fetchall():
-            st.subheader(tytul)
-            st.caption(f"Twórca: {autor}")
-            if os.path.exists(os.path.join('uploads', plik)):
-                st.video(os.path.join('uploads', plik))
-            st.markdown("---")
-    else:
-        st.info("Nikogo jeszcze nie obserwujesz.")
-    conn.close()
-
-# =========================================================================
-# 3. HISTORIA OGLĄDANIA
-# =========================================================================
-elif menu == "🕒 Historia oglądania":
-    st.header("🕒 Ostatnio oglądane filmy")
-    conn = sqlite3.connect('baza.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT f.id, f.autor, f.tytul, f.plik, h.data_obejrzenia 
-        FROM historia h JOIN filmy f ON h.film_id = f.id 
-        WHERE h.uzytkownik = ? ORDER BY h.id DESC LIMIT 20
-    ''', (st.session_state.uzytkownik,))
-    historia = cursor.fetchall()
-    conn.close()
-    if historia:
-        for f_id, autor, tytul, plik, data in historia:
-            st.subheader(tytul)
-            st.caption(f"Autor: {autor} | Obejrzano: {data}")
-            if os.path.exists(os.path.join('uploads', plik)):
-                st.video(os.path.join('uploads', plik))
-            st.markdown("---")
-    else:
-        st.info("Twoja historia jest pusta.")
-
-# =========================================================================
-# 4. DODAJ FILM
-# =========================================================================
-elif menu == "➕ Dodaj film":
+# --- ZAKŁADKA: DODAJ FILM ---
+if menu == "Dodaj film":
     st.header("➕ Opublikuj nowy film")
     with st.form("upload_form", clear_on_submit=True):
         tytul = st.text_input("Tytuł filmu:")
-        opis_filmu = st.text_area("Opis filmu:")
-        kategoria = st.selectbox("Kategoria:", ["Humor", "Gaming", "Edukacja", "Vlogs", "Muzyka", "Inne"])
+        wideo = st.file_uploader("Wybierz plik wideo (mp4):", type=["mp4", "mov"])
+        submitted = st.form_submit_button("Opublikuj")
         
-        auto_tagi = f"#{kategoria.lower()} #{tytul.split()[0].lower() if tytul else 'short'}"
-        tagi = st.text_input("Hashtag (AI):", value=auto_tagi)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            wideo = st.file_uploader("Wybierz plik wideo (mp4, mov):", type=["mp4", "mov"])
-        with col2:
-            miniatura = st.file_uploader("Miniatura (opcjonalnie):", type=["png", "jpg", "jpeg"])
-            
-        jest_ai = st.checkbox("🤖 Film wygenerowany przez Sztuczną Inteligencję")
-        
-        if st.form_submit_button("Opublikuj (+25 XP)") and tytul and wideo:
-            nazwa_wideo = wideo.name
-            with open(os.path.join('uploads', nazwa_wideo), "wb") as f:
-                f.write(wideo.getbuffer())
-            
-            nazwa_mini = ""
-            if miniatura:
-                nazwa_mini = "min_" + miniatura.name
-                with open(os.path.join('uploads', nazwa_mini), "wb") as f:
-                    f.write(miniatura.getbuffer())
-            
-            conn = sqlite3.connect('baza.db')
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO filmy (autor, tytul, opis_filmu, plik, miniatura, czy_ai, kategoria, data_publikacji, tagi) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (st.session_state.uzytkownik, tytul, opis_filmu, nazwa_wideo, nazwa_mini, 1 if jest_ai else 0, kategoria, datetime.now().strftime("%Y-%m-%d"), tagi))
-            cursor.execute('UPDATE uzytkownicy SET punkty = punkty + 25 WHERE nazwa = ?', (st.session_state.uzytkownik,))
-            conn.commit()
-            conn.close()
-            st.success("Opublikowano pomyślnie!")
-            st.rerun()
+        if submitted:
+            if tytul and wideo:
+                sciezka = os.path.join('uploads', wideo.name)
+                with open(sciezka, "wb") as f:
+                    f.write(wideo.getbuffer())
+                
+                conn = sqlite3.connect('baza.db')
+                cursor = conn.cursor()
+                cursor.execute('INSERT INTO filmy (autor, tytul, plik, lajki) VALUES (?, ?, ?, 0)', (st.session_state.uzytkownik, tytul, wideo.name))
+                conn.commit()
+                conn.close()
+                
+                st.success("Film został dodany!")
+                st.rerun()
+            else:
+                st.error("Podaj tytuł i wybierz plik wideo!")
 
-# =========================================================================
-# 5. ZNAJOMI I CHAT
-# =========================================================================
-elif menu == "👥 Znajomi i Chat":
+# --- ZAKŁADKA: ZNAJOMI I CHAT ---
+elif menu == "Znajomi i Chat":
     st.header("👥 Znajomi i Wiadomości")
+    
+    # Pobieranie listy znajomych
     conn = sqlite3.connect('baza.db')
     cursor = conn.cursor()
     cursor.execute('SELECT znajomy FROM znajomi WHERE uzytkownik = ?', (st.session_state.uzytkownik,))
-    znajomi = [r[0] for r in cursor.fetchall()]
+    znajomi = [row[0] for row in cursor.fetchall()]
     conn.close()
     
-    col_z, col_c = st.columns([1, 2])
-    with col_z:
-        wybrany = st.selectbox("Wybierz znajomego:", znajomi) if znajomi else None
-        if not znajomi:
-            st.info("Brak znajomych.")
-        with st.form("add_f", clear_on_submit=True):
-            s_u = st.text_input("Nazwa użytkownika:")
-            if st.form_submit_button("Dodaj") and s_u:
-                conn = sqlite3.connect('baza.db')
-                cursor = conn.cursor()
-                try:
-                    cursor.execute('INSERT INTO znajomi (uzytkownik, znajomy) VALUES (?, ?)', (st.session_state.uzytkownik, s_u))
-                    conn.commit()
-                    st.success("Dodano!")
-                    st.rerun()
-                except:
-                    st.warning("Już na liście lub brak użytkownika.")
-                conn.close()
-    with col_c:
-        if wybrany:
-            st.subheader(f"Czat z: {wybrany}")
+    col_znajomi, col_czat = st.columns([1, 2])
+    
+    with col_znajomi:
+        st.subheader("Twoi znajomi")
+        if znajomi:
+            wybrany_znajomy = st.selectbox("Wybierz do czatu:", znajomi)
+        else:
+            wybrany_znajomy = None
+            st.info("Brak znajomych na liście.")
+            
+        st.markdown("---")
+        st.subheader("Dodaj znajomego")
+        with st.form("add_friend_form", clear_on_submit=True):
+            szukany_login = st.text_input("Nazwa użytkownika:")
+            dodaj_btn = st.form_submit_button("Dodaj")
+            if dodaj_btn and szukany_login:
+                if szukany_login == st.session_state.uzytkownik:
+                    st.error("Nie możesz dodać samego siebie!")
+                else:
+                    conn = sqlite3.connect('baza.db')
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT nazwa FROM uzytkownicy WHERE nazwa = ?', (szukany_login,))
+                    istnieje = cursor.fetchone()
+                    if istnieje:
+                        try:
+                            cursor.execute('INSERT INTO znajomi (uzytkownik, znajomy) VALUES (?, ?)', (st.session_state.uzytkownik, szukany_login))
+                            conn.commit()
+                            st.success(f"Dodano użytkownika {szukany_login}!")
+                            st.rerun()
+                        except sqlite3.IntegrityError:
+                            st.warning("Ten użytkownik jest już na Twojej liście.")
+                    else:
+                        st.error("Nie ma takiego użytkownika.")
+                    conn.close()
+                    
+    with col_czat:
+        if wybrany_znajomy:
+            st.subheader(f"💬 Czat z: {wybrany_znajomy}")
+            
+            # Pobieranie wiadomości
             conn = sqlite3.connect('baza.db')
             cursor = conn.cursor()
-            cursor.execute('SELECT nadawca, tekst FROM wiadomosci WHERE (nadawca = ? AND odbiorca = ?) OR (nadawca = ? AND odbiorca = ?)', 
-                           (st.session_state.uzytkownik, wybrany, wybrany, st.session_state.uzytkownik))
-            msgs = cursor.fetchall()
+            cursor.execute('''
+                SELECT nadawca, tekst FROM wiadomosci 
+                WHERE (nadawca = ? AND odbiorca = ?) OR (nadawca = ? AND odbiorca = ?)
+                ORDER BY id ASC
+            ''', (st.session_state.uzytkownik, wybrany_znajomy, wybrany_znajomy, st.session_state.uzytkownik))
+            wiadomosci = cursor.fetchall()
             conn.close()
             
-            with st.container(height=300):
-                for n, t in msgs:
-                    if n == st.session_state.uzytkownik:
-                        st.chat_message("user").write(t)
-                    else:
-                        st.chat_message("
+            # Wyświetlanie historii wiadomości
+            chat_container = st.container(height=400)
+            with chat_container:
+                if wiadomosci:
+                    for nadawca, tekst in wiadomosci:
+                        if nadawca == st.session_state.uzytkownik:
+                            st.chat_message("user").write(tekst)
+                        else:
+                            st.chat_message("assistant").write(f"**{nadawca}**: {tekst}")
+                else:
+                    st.info("Brak wiadomości. Rozpocznij konwersację!")
+            
+            # Wysyłanie wiadomości
+            tekst_wiadomosci = st.chat_input("Napisz wiadomość...")
+            if tekst_wiadomosci:
+                conn = sqlite3.connect('baza.db')
+                cursor = conn.cursor()
+                cursor.execute('INSERT INTO wiadomosci (nadawca, odbiorca, tekst) VALUES (?, ?, ?)', 
+                               (st.session_state.uzytkownik, wybrany_znajomy, tekst_wiadomosci))
+                conn.commit()
+                conn.close()
+                st.rerun()
+        else:
+            st.info("Wybierz znajomego z listy po lewej stronie, aby otworzyć czat.")
+
+# --- ZAKŁADKA: STRONA GŁÓWNA ---
+else:
+    conn = sqlite3.connect('baza.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, autor, tytul, plik, lajki FROM filmy ORDER BY id DESC')
+    filmy = cursor.fetchall()
+    conn.close()
+
+    if szukaj:
+        filmy = [f for f in filmy if szukaj.lower() in f[1].lower() or szukaj.lower() in f[2].lower()]
+
+    if filmy:
+        for film_id, autor, tytul, plik, lajki in filmy:
+            col_video, col_actions = st.columns([3, 1])
+            
+            with col_video:
+                st.subheader(tytul)
+                st.caption(f"👤 Autor: **{autor}**")
+                sciezka_pliku = os.path.join('uploads', plik)
+                if os.path.exists(sciezka_pliku):
+                    st.video(sciezka_pliku)
+                else:
+                    st.warning("Plik wideo nie istnieje na serwerze.")
+            
+            with col_actions:
+                st.write("") 
+                st.write("")
+                if st.button(f"❤️ {lajki}", key=f"like_{film_id}"):
+                    conn = sqlite3.connect('baza.db')
+                    cursor = conn.cursor()
+                    cursor.execute('UPDATE filmy SET lajki = lajki + 1 WHERE id = ?', (film_id,))
+                    conn.commit()
+                    conn.close()
+                    st.rerun()
+                
+                st.markdown("💬 **Komentarze**")
+
+            with st.expander(f"Pokaż/Dodaj komentarze do: {tytul}"):
+                conn = sqlite3.connect('baza.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT autor, tekst FROM komentarze WHERE film_id = ?', (film_id,))
+                komentarze = cursor.fetchall()
+                conn.close()
+                
+                if komentarze:
+                    for k_autor, k_tekst in komentarze:
+                        st.markdown(f"**{k_autor}**: {k_tekst}")
+                else:
+                    st.info("Brak komentarzy. Bądź pierwszy!")
+                
+                with st.form(key=f"comm_form_{film_id}", clear_on_submit=True):
+                    nowy_kom = st.text_input("Napisz komentarz...", key=f"input_comm_{film_id}")
+                    wyslij_kom = st.form_submit_button("Wyślij")
+                    if wyslij_kom and nowy_kom:
+                        conn = sqlite3.connect('baza.db')
+                        cursor = conn.cursor()
+                        cursor.execute('INSERT INTO komentarze (film_id, autor, tekst) VALUES (?, ?, ?)', (film_id, st.session_state.uzytkownik, nowy_kom))
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
+
+            st.markdown("---")
+    else:
+        st.info("Brak filmów spełniających kryteria.")
